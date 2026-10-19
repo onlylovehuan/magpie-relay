@@ -1,0 +1,23 @@
+{
+  "messages": {
+    "ext.description": "VS Code Copilot Chat provider for Magpie gateway",
+    "config.endpoint": "Magpie gateway endpoint",
+    "config.endpoint.description": "The address of the Magpie gateway server",
+    "config.gatewayKey": "Gateway authentication key",
+    "config.gatewayKey.description": "Authentication key for the Magpie gateway",
+    "config.upstreamApiKey": "Upstream API key",
+    "config.upstreamApiKey.description": "Optional API key for upstream providers",
+    "config.maxTokens": "Maximum output tokens",
+    "config.maxTokens.description": "Maximum number of tokens to generate",
+    "config.debugMode": "Debug mode",
+    "config.debugMode.description": "Enable debug logging",
+    "config.reasoningEffort": "Default reasoning effort",
+    "config.reasoningEffort.description": "Default reasoning depth (low/medium/high)",
+    "command.setEndpoint": "Set Gateway Address",
+    "command.setGatewayKey": "Set Gateway Key",
+    "command.setApiKey": "Set Upstream API Key",
+    "command.refreshModels": "Refresh Model List",
+    "command.openSettings": "Open Settings",
+    "command.clearAll": "Clear All Configuration"
+  }
+}

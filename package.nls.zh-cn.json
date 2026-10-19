@@ -1,0 +1,23 @@
+{
+  "messages": {
+    "ext.description": "Magpie 网关的 VS Code Copilot Chat 提供者",
+    "config.endpoint": "Magpie 网关地址",
+    "config.endpoint.description": "Magpie 网关服务器的地址",
+    "config.gatewayKey": "网关认证密钥",
+    "config.gatewayKey.description": "用于 Magpie 网关认证的密钥",
+    "config.upstreamApiKey": "上游 API 密钥",
+    "config.upstreamApiKey.description": "上游提供商的 API 密钥（可选，部分模型需要）",
+    "config.maxTokens": "最大输出 Token 数",
+    "config.maxTokens.description": "生成的最大 Token 数量",
+    "config.debugMode": "调试模式",
+    "config.debugMode.description": "启用调试日志",
+    "config.reasoningEffort": "默认推理深度",
+    "config.reasoningEffort.description": "默认推理深度 (low/medium/high)",
+    "command.setEndpoint": "设置网关地址",
+    "command.setGatewayKey": "设置网关密钥",
+    "command.setApiKey": "设置上游 API 密钥",
+    "command.refreshModels": "刷新模型列表",
+    "command.openSettings": "打开设置",
+    "command.clearAll": "清除所有配置"
+  }
+}

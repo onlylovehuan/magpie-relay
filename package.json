@@ -1,0 +1,100 @@
+{
+  "name": "magpie-relay",
+  "displayName": "Magpie Relay for Copilot",
+  "description": "VS Code Copilot Chat provider for Magpie gateway",
+  "version": "0.1.0",
+  "publisher": "relay",
+  "engines": {
+    "vscode": "^1.116.0"
+  },
+  "categories": ["AI", "Chat", "Programming Languages"],
+  "main": "./out/extension.js",
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.116.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^3.0.0"
+  },
+  "contributes": {
+    "languageModelChatProviders": [
+      {
+        "vendor": "magpie",
+        "displayName": "Magpie Relay"
+      }
+    ],
+    "commands": [
+      {
+        "command": "magpie-relay.setEndpoint",
+        "title": "Magpie: 设置网关地址",
+        "category": "Magpie"
+      },
+      {
+        "command": "magpie-relay.setGatewayKey",
+        "title": "Magpie: 设置网关密钥",
+        "category": "Magpie"
+      },
+      {
+        "command": "magpie-relay.setApiKey",
+        "title": "Magpie: 设置上游 API Key",
+        "category": "Magpie"
+      },
+      {
+        "command": "magpie-relay.refreshModels",
+        "title": "Magpie: 刷新模型列表",
+        "category": "Magpie"
+      },
+      {
+        "command": "magpie-relay.openSettings",
+        "title": "Magpie: 打开设置",
+        "category": "Magpie"
+      },
+      {
+        "command": "magpie-relay.clearAll",
+        "title": "Magpie: 清除所有配置",
+        "category": "Magpie"
+      }
+    ],
+    "configuration": {
+      "title": "Magpie Relay",
+      "properties": {
+        "magpie-relay.endpoint": {
+          "type": "string",
+          "default": "http://127.0.0.1:3425",
+          "description": "Magpie 网关地址"
+        },
+        "magpie-relay.gatewayKey": {
+          "type": "string",
+          "description": "Magpie 网关密钥（用于远程访问认证）"
+        },
+        "magpie-relay.upstreamApiKey": {
+          "type": "string",
+          "description": "上游 API 提供商的 Key（可选，部分模型需要）"
+        },
+        "magpie-relay.maxTokens": {
+          "type": "number",
+          "default": 4096,
+          "description": "最大输出 Token 数"
+        },
+        "magpie-relay.debugMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "调试模式"
+        },
+        "magpie-relay.reasoningEffort": {
+          "type": "string",
+          "default": "medium",
+          "enum": ["low", "medium", "high"],
+          "description": "默认推理深度"
+        }
+      }
+    }
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ]
+}
