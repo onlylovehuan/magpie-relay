@@ -43,7 +43,10 @@ const vscode = __importStar(require("vscode"));
 exports.CONFIG_SECTION = 'magpie-relay';
 function getEndpoint() {
     const config = vscode.workspace.getConfiguration(exports.CONFIG_SECTION);
-    return config.get('endpoint') || 'http://127.0.0.1:3425';
+    let endpoint = config.get('endpoint') || 'http://127.0.0.1:3425';
+    // Remove trailing slashes
+    endpoint = endpoint.replace(/\/+$/, '');
+    return endpoint;
 }
 function getMaxTokens() {
     const config = vscode.workspace.getConfiguration(exports.CONFIG_SECTION);

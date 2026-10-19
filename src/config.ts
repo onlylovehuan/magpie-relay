@@ -4,7 +4,10 @@ export const CONFIG_SECTION = 'magpie-relay';
 
 export function getEndpoint(): string {
   const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
-  return config.get<string>('endpoint') || 'http://127.0.0.1:3425';
+  let endpoint = config.get<string>('endpoint') || 'http://127.0.0.1:3425';
+  // Remove trailing slashes
+  endpoint = endpoint.replace(/\/+$/, '');
+  return endpoint;
 }
 
 export function getMaxTokens(): number {

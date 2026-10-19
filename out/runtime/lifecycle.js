@@ -5,10 +5,11 @@ exports.deactivate = deactivate;
 const provider_js_1 = require("./provider.js");
 const catalog_js_1 = require("../provider/catalog.js");
 async function activate(context) {
-    console.log('[Magpie Relay] Extension activating...');
+    const version = context.extension.packageJSON.version;
+    console.log(`[Magpie Relay v${version}] Extension activating...`);
     // Register the language model provider
     (0, provider_js_1.registerProvider)(context);
-    console.log('[Magpie Relay] Extension activated successfully');
+    console.log(`[Magpie Relay v${version}] Extension activated successfully`);
 }
 function deactivate() {
     // Clear cache on deactivate

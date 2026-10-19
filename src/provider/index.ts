@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 import { AuthManager } from '../auth.js';
-import { getEndpoint, getReasoningEffort } from '../config.js';
+import { streamChatCompletion } from './stream.js';
+import { getEndpoint, getReasoningEffort, isDebugMode } from '../config.js';
 import { getModels, clearModelCache } from './catalog.js';
 
-// Use any to bypass complex VS Code API type mismatches between versions
 export class MagpieRelayProvider {
   private context: vscode.ExtensionContext;
   private authManager: AuthManager;
@@ -13,136 +13,185 @@ export class MagpieRelayProvider {
     this.authManager = new AuthManager(context.secrets);
   }
 
-  async provideLanguageModelChatInformation(options: any, token: vscode.CancellationToken): Promise<any[]> {
+  async provideLanguageModelChatInformation(options: any, token: vscode.CancellationToken): Promise<vscode.LanguageModelChatInformation[]> {
+    if (isDebugMode()) {
+      console.log('[Magpie Relay] provideLanguageModelChatInformation called, options:', JSON.stringify(options));
+    }
+
     try {
       const models = await getModels(this.authManager);
       if (token.isCancellationRequested) {
         return [];
       }
 
-      return models.map(model => ({
-        id: model.id,
-        name: model.name,
-        contextWindow: model.contextWindow,
-        maxOutputTokens: model.maxOutputTokens || 4096,
-      }));
+      const hasApiKey = await this.authManager.hasAnyKey();
+      const result = models.map(model => {
+        // Parse provider from model ID (format: "provider/model-id")
+        const parts = model.id.split('/');
+        const provider = parts[0] || 'unknown';
+        const modelName = parts.slice(1).join('/') || model.name || model.id;
+        const displayName = `${provider} / ${modelName}`;
+
+        // Build capabilities
+        const capabilities: any = {
+          toolCalling: model.supportsToolCalling,
+          imageInput: model.supportsVision,
+          streaming: true,
+        };
+
+        // Add reasoning if supported
+        if (model.supportsReasoning) {
+          capabilities.reasoningEfforts = model.reasoningEfforts || ['low', 'medium', 'high'];
+        }
+
+        return {
+          id: model.id,
+          name: displayName,
+          family: provider,
+          version: '1.0',
+          maxInputTokens: model.contextWindow,
+          maxOutputTokens: model.maxOutputTokens || 4096,
+          isBYOK: true,
+          isUserSelectable: true,
+          capabilities,
+          statusIcon: hasApiKey ? undefined : new vscode.ThemeIcon('warning'),
+          detail: this.formatDetail(model),
+          tooltip: this.formatTooltip(model),
+        } as vscode.LanguageModelChatInformation;
+      });
+
+      if (isDebugMode()) {
+        console.log('[Magpie Relay] Returning models:', result.length, result.map(m => m.id));
+      }
+
+      return result;
     } catch (error) {
       console.error('[Magpie Relay] Failed to fetch models:', error);
       return [];
     }
   }
 
+  private formatDetail(model: any): string {
+    const parts: string[] = [];
+    if (model.supportsVision) parts.push('Vision');
+    if (model.supportsReasoning) parts.push('Reasoning');
+    if (model.supportsToolCalling) parts.push('Tools');
+    return parts.length > 0 ? parts.join(' · ') : 'Text';
+  }
+
+  private formatTooltip(model: any): string {
+    const lines = [model.name || model.id];
+    if (model.supportsVision) lines.push('✓ Vision (图片输入)');
+    if (model.supportsReasoning) lines.push('✓ Reasoning (思考推理)');
+    if (model.supportsToolCalling) lines.push('✓ Tools (函数调用)');
+    lines.push(`Context: ${model.contextWindow?.toLocaleString()} tokens`);
+    return lines.join('\n');
+  }
+
   async provideLanguageModelChatResponse(
-    model: any,
-    messages: readonly any[],
-    options: any,
-    progress: any,
+    model: vscode.LanguageModelChatInformation,
+    messages: readonly vscode.LanguageModelChatRequestMessage[],
+    options: vscode.ProvideLanguageModelChatResponseOptions,
+    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken
   ): Promise<void> {
     const endpoint = getEndpoint();
 
-    try {
-      // Safe access to options
-      const tools = options?.tools;
-
-      // Convert messages
-      const convertedMessages = messages.map((msg: any) => {
-        const role = msg.role === 1 ? 'user' : msg.role === 2 ? 'assistant' : 'user';
-        const content = typeof msg.content === 'string' ? msg.content
-          : (msg.content || []).map((part: any) => {
-            if (part?.value !== undefined) {
-              return { type: 'text', text: part.value };
-            }
-            return { type: 'text', text: String(part?.data ?? '') };
-          });
-        return { role, content };
-      });
-
-      const gatewayKey = await this.authManager.getGatewayKey();
-      const upstreamKey = await this.authManager.getUpstreamKey();
-
-      const request: any = {
-        model: model.id,
-        messages: convertedMessages,
-        stream: true,
-        max_tokens: 4096,
-        reasoning_effort: getReasoningEffort()
-      };
-
-      // Safe check for tools
-      if (tools && Array.isArray(tools) && tools.length > 0) {
-        request.tools = tools.map((tool: any) => ({
-          type: 'function',
-          function: {
-            name: tool?.name || '',
-            description: tool?.description || '',
-            parameters: tool?.inputSchema || { type: 'object' }
-          }
-        }));
-        request.tool_choice = 'auto';
-      }
-
-      const controller = new AbortController();
-      token.onCancellationRequested(() => controller.abort());
-
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json'
-      };
-      if (gatewayKey) headers['Authorization'] = `Bearer ${gatewayKey}`;
-      if (upstreamKey) headers['x-api-key'] = upstreamKey;
-
-      const response = await fetch(`${endpoint}/v1/chat/completions`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(request),
-        signal: controller.signal
-      });
-
-      if (!response.ok) {
-        throw new Error(`API 请求失败 (${response.status})`);
-      }
-
-      const body = response.body;
-      if (!body) throw new Error('No response body');
-
-      const reader = body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const data = line.slice(6);
-          if (data === '[DONE]') return;
-
-          try {
-            const chunk = JSON.parse(data);
-            const delta = chunk.choices?.[0]?.delta;
-            if (delta?.content) {
-              progress.report(delta.content);
-            }
-          } catch {
-            // Ignore parse errors
-          }
-        }
-      }
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        return;
-      }
-      throw error;
+    if (isDebugMode()) {
+      console.log('[Magpie Relay] Chat request - model:', model?.id);
+      console.log('[Magpie Relay] Messages count:', messages?.length);
     }
+
+    // Convert messages to OpenAI format
+    const convertedMessages = messages.map((msg: vscode.LanguageModelChatRequestMessage) => {
+      const role = msg.role === vscode.LanguageModelChatMessageRole.User ? 'user'
+        : msg.role === vscode.LanguageModelChatMessageRole.Assistant ? 'assistant'
+        : 'user';
+
+      let content: string | any[];
+
+      if (typeof msg.content === 'string') {
+        content = msg.content;
+      } else if (Array.isArray(msg.content)) {
+        content = msg.content.map((part: any) => {
+          if (part instanceof vscode.LanguageModelTextPart) {
+            return { type: 'text', text: part.value };
+          }
+          if (part instanceof vscode.LanguageModelDataPart) {
+            return { type: 'text', text: String(part.data ?? '') };
+          }
+          return { type: 'text', text: '' };
+        });
+      } else {
+        content = String(msg.content ?? '');
+      }
+
+      return { role, content };
+    });
+
+    const gatewayKey = await this.authManager.getGatewayKey();
+    const upstreamKey = await this.authManager.getUpstreamKey();
+
+    if (isDebugMode()) {
+      console.log('[Magpie Relay] Gateway key available:', !!gatewayKey);
+    }
+
+    const request: any = {
+      model: model.id,
+      messages: convertedMessages,
+      stream: true,
+      stream_options: { include_usage: true },
+      max_tokens: 4096,
+    };
+
+    // Add reasoning effort if model supports it
+    if (model.capabilities && 'reasoningEfforts' in model.capabilities) {
+      request.reasoning_effort = getReasoningEffort();
+    }
+
+    if (options?.tools && options.tools.length > 0) {
+      request.tools = options.tools.map((tool: any) => ({
+        type: 'function',
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.inputSchema
+        }
+      }));
+      request.tool_choice = 'auto';
+      if (isDebugMode()) {
+        console.log('[Magpie Relay] Tools:', options.tools.map((t: any) => t.name));
+      }
+    }
+
+    // Stream via progress (matching commandcode / deepseek-v4 pattern)
+    await streamChatCompletion(
+      endpoint,
+      request,
+      gatewayKey,
+      upstreamKey,
+      {
+        progress,
+        onError: (error: Error) => {
+          if (isDebugMode()) {
+            console.error('[Magpie Relay] Stream error:', error);
+          }
+          throw error;
+        },
+      },
+      token
+    );
   }
 
-  async provideTokenCount(model: any, text: string, token: vscode.CancellationToken): Promise<number> {
-    return Math.ceil(text.length / 4);
+  async provideTokenCount(
+    model: vscode.LanguageModelChatInformation,
+    text: string | vscode.LanguageModelChatRequestMessage,
+    token: vscode.CancellationToken
+  ): Promise<number> {
+    if (typeof text === 'string') {
+      return Math.ceil(text.length / 4);
+    }
+    return 256; // Estimate for message objects
   }
 
   async setEndpoint(): Promise<void> {

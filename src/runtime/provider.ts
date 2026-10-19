@@ -4,6 +4,7 @@ import { MagpieRelayProvider } from '../provider/index.js';
 let provider: MagpieRelayProvider | undefined;
 
 export function registerProvider(context: vscode.ExtensionContext): MagpieRelayProvider {
+  const version = context.extension.packageJSON.version;
   provider = new MagpieRelayProvider(context);
 
   // Register commands
@@ -25,7 +26,7 @@ export function registerProvider(context: vscode.ExtensionContext): MagpieRelayP
     vscode.lm.registerLanguageModelChatProvider('magpie', regProvider)
   );
 
-  console.log('[Magpie Relay] Provider registered');
+  console.log(`[Magpie Relay v${version}] Provider registered`);
 
   return provider;
 }

@@ -1,7 +1,41 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.streamChatCompletion = streamChatCompletion;
 exports.prepareChatRequest = prepareChatRequest;
+const vscode = __importStar(require("vscode"));
 const config_js_1 = require("../config.js");
 const convert_js_1 = require("./convert.js");
 /**
@@ -75,20 +109,29 @@ async function streamChatCompletion(endpoint, request, gatewayKey, upstreamKey, 
                     const delta = chunk.choices?.[0]?.delta;
                     if (delta) {
                         // Reasoning/thinking content
-                        if (delta.reasoning && callbacks.onThinking) {
-                            callbacks.onThinking(delta.reasoning);
+                        if (delta.reasoning) {
+                            callbacks.progress?.report(new vscode.LanguageModelThinkingPart(delta.reasoning));
+                            callbacks.onThinking?.(delta.reasoning);
                         }
-                        // Text content
+                        // Text content — report immediately via progress (streaming)
                         if (delta.content) {
-                            callbacks.onContent(delta.content);
+                            callbacks.progress?.report(new vscode.LanguageModelTextPart(delta.content));
+                            callbacks.onContent?.(delta.content);
                         }
-                        // Tool calls
+                        // Tool calls — report via progress when complete
                         if (delta.tool_calls && delta.tool_calls.length > 0) {
                             for (const toolCall of delta.tool_calls) {
                                 if (!currentToolCall || currentToolCall.id !== toolCall.id) {
                                     // Start new tool call
                                     if (currentToolCall) {
                                         callbacks.onToolCallEnd?.();
+                                        // Report completed tool call via progress
+                                        try {
+                                            callbacks.progress?.report(new vscode.LanguageModelToolCallPart(currentToolCall.id, currentToolCall.function.name, JSON.parse(currentToolCall.function.arguments)));
+                                        }
+                                        catch {
+                                            callbacks.progress?.report(new vscode.LanguageModelToolCallPart(currentToolCall.id, currentToolCall.function.name, {}));
+                                        }
                                     }
                                     currentToolCall = {
                                         id: toolCall.id,
@@ -111,6 +154,13 @@ async function streamChatCompletion(endpoint, request, gatewayKey, upstreamKey, 
                     if (chunk.choices?.[0]?.finish_reason) {
                         if (currentToolCall) {
                             callbacks.onToolCallEnd?.();
+                            // Report final tool call via progress
+                            try {
+                                callbacks.progress?.report(new vscode.LanguageModelToolCallPart(currentToolCall.id, currentToolCall.function.name, JSON.parse(currentToolCall.function.arguments)));
+                            }
+                            catch {
+                                callbacks.progress?.report(new vscode.LanguageModelToolCallPart(currentToolCall.id, currentToolCall.function.name, {}));
+                            }
                             currentToolCall = null;
                         }
                     }

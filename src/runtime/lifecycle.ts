@@ -3,12 +3,13 @@ import { registerProvider } from './provider.js';
 import { clearModelCache } from '../provider/catalog.js';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  console.log('[Magpie Relay] Extension activating...');
+  const version = context.extension.packageJSON.version;
+  console.log(`[Magpie Relay v${version}] Extension activating...`);
 
   // Register the language model provider
   registerProvider(context);
 
-  console.log('[Magpie Relay] Extension activated successfully');
+  console.log(`[Magpie Relay v${version}] Extension activated successfully`);
 }
 
 export function deactivate(): void {

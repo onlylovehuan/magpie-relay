@@ -2,7 +2,7 @@
   "name": "magpie-relay",
   "displayName": "Magpie Relay for Copilot",
   "description": "VS Code Copilot Chat provider for Magpie gateway",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "publisher": "relay",
   "icon": "media/icon.png",
   "engines": {
@@ -15,6 +15,7 @@
   ],
   "main": "./out/extension.js",
   "scripts": {
+    "dev": "tsc -p ./ && vsce package",
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",

@@ -39,6 +39,7 @@ const vscode = __importStar(require("vscode"));
 const index_js_1 = require("../provider/index.js");
 let provider;
 function registerProvider(context) {
+    const version = context.extension.packageJSON.version;
     provider = new index_js_1.MagpieRelayProvider(context);
     // Register commands
     context.subscriptions.push(vscode.commands.registerCommand('magpie-relay.setEndpoint', () => provider?.setEndpoint()), vscode.commands.registerCommand('magpie-relay.setGatewayKey', () => provider?.setGatewayKey()), vscode.commands.registerCommand('magpie-relay.setApiKey', () => provider?.setUpstreamKey()), vscode.commands.registerCommand('magpie-relay.refreshModels', () => provider?.refreshModels()), vscode.commands.registerCommand('magpie-relay.openSettings', () => {
@@ -48,7 +49,7 @@ function registerProvider(context) {
     // Use 'any' to bypass version-specific type differences
     const regProvider = provider;
     context.subscriptions.push(vscode.lm.registerLanguageModelChatProvider('magpie', regProvider));
-    console.log('[Magpie Relay] Provider registered');
+    console.log(`[Magpie Relay v${version}] Provider registered`);
     return provider;
 }
 function getProvider() {

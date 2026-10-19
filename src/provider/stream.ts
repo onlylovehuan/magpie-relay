@@ -5,13 +5,15 @@ import { AuthManager } from '../auth.js';
 import { convertMessages, convertTools } from './convert.js';
 
 interface StreamCallbacks {
-  onContent: (content: string) => void;
+  onContent?: (content: string) => void;
   onThinking?: (thinking: string) => void;
   onToolCallStart?: (toolCall: ToolCall) => void;
   onToolCallEnd?: () => void;
   onError?: (error: Error) => void;
   onDone?: () => void;
   onUsage?: (usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }) => void;
+  /** Optional progress reporter for streaming response parts (text / tool calls). */
+  progress?: vscode.Progress<vscode.LanguageModelResponsePart>;
 }
 
 /**
@@ -106,22 +108,44 @@ export async function streamChatCompletion(
           const delta = chunk.choices?.[0]?.delta;
           if (delta) {
             // Reasoning/thinking content
-            if (delta.reasoning && callbacks.onThinking) {
-              callbacks.onThinking(delta.reasoning);
+            if (delta.reasoning) {
+              callbacks.progress?.report(
+                new vscode.LanguageModelThinkingPart(delta.reasoning) as unknown as vscode.LanguageModelResponsePart,
+              );
+              callbacks.onThinking?.(delta.reasoning);
             }
 
-            // Text content
+            // Text content — report immediately via progress (streaming)
             if (delta.content) {
-              callbacks.onContent(delta.content);
+              callbacks.progress?.report(new vscode.LanguageModelTextPart(delta.content));
+              callbacks.onContent?.(delta.content);
             }
 
-            // Tool calls
+            // Tool calls — report via progress when complete
             if (delta.tool_calls && delta.tool_calls.length > 0) {
               for (const toolCall of delta.tool_calls) {
                 if (!currentToolCall || currentToolCall.id !== toolCall.id) {
                   // Start new tool call
                   if (currentToolCall) {
                     callbacks.onToolCallEnd?.();
+                    // Report completed tool call via progress
+                    try {
+                      callbacks.progress?.report(
+                        new vscode.LanguageModelToolCallPart(
+                          currentToolCall.id,
+                          currentToolCall.function.name,
+                          JSON.parse(currentToolCall.function.arguments),
+                        ),
+                      );
+                    } catch {
+                      callbacks.progress?.report(
+                        new vscode.LanguageModelToolCallPart(
+                          currentToolCall.id,
+                          currentToolCall.function.name,
+                          {},
+                        ),
+                      );
+                    }
                   }
                   currentToolCall = {
                     id: toolCall.id,
@@ -144,6 +168,24 @@ export async function streamChatCompletion(
           if (chunk.choices?.[0]?.finish_reason) {
             if (currentToolCall) {
               callbacks.onToolCallEnd?.();
+              // Report final tool call via progress
+              try {
+                callbacks.progress?.report(
+                  new vscode.LanguageModelToolCallPart(
+                    currentToolCall.id,
+                    currentToolCall.function.name,
+                    JSON.parse(currentToolCall.function.arguments),
+                  ),
+                );
+              } catch {
+                callbacks.progress?.report(
+                  new vscode.LanguageModelToolCallPart(
+                    currentToolCall.id,
+                    currentToolCall.function.name,
+                    {},
+                  ),
+                );
+              }
               currentToolCall = null;
             }
           }
