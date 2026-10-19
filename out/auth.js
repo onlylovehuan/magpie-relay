@@ -76,7 +76,14 @@ class AuthManager {
         return config.get('gatewayKey');
     }
     async setGatewayKey(key) {
-        await this.secretStorage.store(consts_js_1.SECRET_GATEWAY_KEY, key.trim());
+        const trimmed = key.trim();
+        if (trimmed) {
+            await this.secretStorage.store(consts_js_1.SECRET_GATEWAY_KEY, trimmed);
+        }
+        else {
+            await this.secretStorage.delete(consts_js_1.SECRET_GATEWAY_KEY);
+        }
+        await updateConfig('gatewayKey', undefined);
     }
     async getUpstreamKey() {
         const secret = await this.secretStorage.get(consts_js_1.SECRET_UPSTREAM_KEY);
@@ -86,7 +93,14 @@ class AuthManager {
         return config.get('upstreamApiKey');
     }
     async setUpstreamKey(key) {
-        await this.secretStorage.store(consts_js_1.SECRET_UPSTREAM_KEY, key.trim());
+        const trimmed = key.trim();
+        if (trimmed) {
+            await this.secretStorage.store(consts_js_1.SECRET_UPSTREAM_KEY, trimmed);
+        }
+        else {
+            await this.secretStorage.delete(consts_js_1.SECRET_UPSTREAM_KEY);
+        }
+        await updateConfig('upstreamApiKey', undefined);
     }
     async hasAnyKey() {
         const gateway = await this.getGatewayKey();

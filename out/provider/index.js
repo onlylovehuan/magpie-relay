@@ -36,224 +36,263 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.MagpieRelayProvider = void 0;
 const vscode = __importStar(require("vscode"));
 const auth_js_1 = require("../auth.js");
-const stream_js_1 = require("./stream.js");
-const config_js_1 = require("../config.js");
+const errors_js_1 = require("../errors.js");
+const logger_js_1 = require("../logger.js");
 const catalog_js_1 = require("./catalog.js");
+const request_js_1 = require("./request.js");
+const stream_js_1 = require("./stream.js");
+const tokens_js_1 = require("./tokens.js");
 class MagpieRelayProvider {
     context;
     authManager;
+    onDidChangeModelsEmitter = new vscode.EventEmitter();
+    modelById = new Map();
+    charsPerToken = 4;
+    onDidChangeLanguageModelChatInformation = this.onDidChangeModelsEmitter.event;
     constructor(context) {
         this.context = context;
         this.authManager = new auth_js_1.AuthManager(context.secrets);
+        context.subscriptions.push(this.onDidChangeModelsEmitter, vscode.workspace.onDidChangeConfiguration(event => {
+            if (event.affectsConfiguration('magpie-relay')) {
+                (0, catalog_js_1.clearModelCache)();
+                this.refreshModelPicker();
+            }
+        }), context.secrets.onDidChange(() => {
+            (0, catalog_js_1.clearModelCache)();
+            this.refreshModelPicker();
+        }));
     }
-    async provideLanguageModelChatInformation(options, token) {
-        if ((0, config_js_1.isDebugMode)()) {
-            console.log('[Magpie Relay] provideLanguageModelChatInformation called, options:', JSON.stringify(options));
+    refreshModelPicker() {
+        this.onDidChangeModelsEmitter.fire();
+    }
+    async provideLanguageModelChatInformation(_options, token) {
+        if (token.isCancellationRequested)
+            return [];
+        const hasApiKey = await this.authManager.hasAnyKey();
+        if (!hasApiKey) {
+            return [this.unavailableModel('请先设置 Magpie 网关密钥。')];
         }
         try {
-            const models = await (0, catalog_js_1.getModels)(this.authManager);
-            if (token.isCancellationRequested) {
+            const models = await (0, catalog_js_1.getModels)(this.authManager, false, token);
+            if (token.isCancellationRequested)
                 return [];
-            }
-            const hasApiKey = await this.authManager.hasAnyKey();
-            const result = models.map(model => {
-                // Parse provider from model ID (format: "provider/model-id")
-                const parts = model.id.split('/');
-                const provider = parts[0] || 'unknown';
-                const modelName = parts.slice(1).join('/') || model.name || model.id;
-                const displayName = `${provider} / ${modelName}`;
-                // Build capabilities
-                const capabilities = {
-                    toolCalling: model.supportsToolCalling,
-                    imageInput: model.supportsVision,
-                    streaming: true,
-                };
-                // Add reasoning if supported
-                if (model.supportsReasoning) {
-                    capabilities.reasoningEfforts = model.reasoningEfforts || ['low', 'medium', 'high'];
-                }
-                return {
-                    id: model.id,
-                    name: displayName,
-                    family: provider,
-                    version: '1.0',
-                    maxInputTokens: model.contextWindow,
-                    maxOutputTokens: model.maxOutputTokens || 4096,
-                    isBYOK: true,
-                    isUserSelectable: true,
-                    capabilities,
-                    statusIcon: hasApiKey ? undefined : new vscode.ThemeIcon('warning'),
-                    detail: this.formatDetail(model),
-                    tooltip: this.formatTooltip(model),
-                };
-            });
-            if ((0, config_js_1.isDebugMode)()) {
-                console.log('[Magpie Relay] Returning models:', result.length, result.map(m => m.id));
-            }
-            return result;
+            this.modelById = new Map(models.map(model => [model.id, model]));
+            return models.map(model => this.toChatInfo(model, true));
         }
         catch (error) {
-            console.error('[Magpie Relay] Failed to fetch models:', error);
-            return [];
+            const displayError = (0, errors_js_1.createUserFacingError)(toError(error));
+            logger_js_1.logger.error('Failed to load Magpie models', error);
+            return [this.unavailableModel(displayError.message)];
         }
-    }
-    formatDetail(model) {
-        const parts = [];
-        if (model.supportsVision)
-            parts.push('Vision');
-        if (model.supportsReasoning)
-            parts.push('Reasoning');
-        if (model.supportsToolCalling)
-            parts.push('Tools');
-        return parts.length > 0 ? parts.join(' · ') : 'Text';
-    }
-    formatTooltip(model) {
-        const lines = [model.name || model.id];
-        if (model.supportsVision)
-            lines.push('✓ Vision (图片输入)');
-        if (model.supportsReasoning)
-            lines.push('✓ Reasoning (思考推理)');
-        if (model.supportsToolCalling)
-            lines.push('✓ Tools (函数调用)');
-        lines.push(`Context: ${model.contextWindow?.toLocaleString()} tokens`);
-        return lines.join('\n');
     }
     async provideLanguageModelChatResponse(model, messages, options, progress, token) {
-        const endpoint = (0, config_js_1.getEndpoint)();
-        if ((0, config_js_1.isDebugMode)()) {
-            console.log('[Magpie Relay] Chat request - model:', model?.id);
-            console.log('[Magpie Relay] Messages count:', messages?.length);
+        const modelDefinition = await (0, catalog_js_1.getModelById)(model.id, this.authManager);
+        if (token.isCancellationRequested)
+            return;
+        if (model.id.startsWith('magpie/unavailable')) {
+            throw new Error(model.detail || 'Magpie 当前不可用。');
         }
-        // Convert messages to OpenAI format
-        const convertedMessages = messages.map((msg) => {
-            const role = msg.role === vscode.LanguageModelChatMessageRole.User ? 'user'
-                : msg.role === vscode.LanguageModelChatMessageRole.Assistant ? 'assistant'
-                    : 'user';
-            let content;
-            if (typeof msg.content === 'string') {
-                content = msg.content;
-            }
-            else if (Array.isArray(msg.content)) {
-                content = msg.content.map((part) => {
-                    if (part instanceof vscode.LanguageModelTextPart) {
-                        return { type: 'text', text: part.value };
-                    }
-                    if (part instanceof vscode.LanguageModelDataPart) {
-                        return { type: 'text', text: String(part.data ?? '') };
-                    }
-                    return { type: 'text', text: '' };
-                });
-            }
-            else {
-                content = String(msg.content ?? '');
-            }
-            return { role, content };
+        const prepared = await (0, request_js_1.prepareChatRequest)({
+            authManager: this.authManager,
+            modelInfo: model,
+            modelDefinition,
+            messages,
+            requestOptions: options,
+            token,
         });
-        const gatewayKey = await this.authManager.getGatewayKey();
-        const upstreamKey = await this.authManager.getUpstreamKey();
-        if ((0, config_js_1.isDebugMode)()) {
-            console.log('[Magpie Relay] Gateway key available:', !!gatewayKey);
-        }
-        const request = {
-            model: model.id,
-            messages: convertedMessages,
-            stream: true,
-            stream_options: { include_usage: true },
-            max_tokens: 4096,
-        };
-        // Add reasoning effort if model supports it
-        if (model.capabilities && 'reasoningEfforts' in model.capabilities) {
-            request.reasoning_effort = (0, config_js_1.getReasoningEffort)();
-        }
-        if (options?.tools && options.tools.length > 0) {
-            request.tools = options.tools.map((tool) => ({
-                type: 'function',
-                function: {
-                    name: tool.name,
-                    description: tool.description,
-                    parameters: tool.inputSchema
-                }
-            }));
-            request.tool_choice = 'auto';
-            if ((0, config_js_1.isDebugMode)()) {
-                console.log('[Magpie Relay] Tools:', options.tools.map((t) => t.name));
-            }
-        }
-        // Stream via progress (matching commandcode / deepseek-v4 pattern)
-        await (0, stream_js_1.streamChatCompletion)(endpoint, request, gatewayKey, upstreamKey, {
+        logger_js_1.logger.debug(`Prepared Magpie request model=${model.id} messages=${prepared.request.messages.length} `
+            + `tools=${prepared.request.tools?.length ?? 0} thinking=${prepared.thinkingEffort ?? 'off'}`);
+        await (0, stream_js_1.streamChatCompletion)({
+            prepared,
             progress,
-            onError: (error) => {
-                if ((0, config_js_1.isDebugMode)()) {
-                    console.error('[Magpie Relay] Stream error:', error);
-                }
-                throw error;
+            token,
+            getCharsPerToken: () => this.charsPerToken,
+            setCharsPerToken: value => {
+                this.charsPerToken = value;
             },
-        }, token);
+        });
     }
-    async provideTokenCount(model, text, token) {
-        if (typeof text === 'string') {
-            return Math.ceil(text.length / 4);
-        }
-        return 256; // Estimate for message objects
+    async provideTokenCount(_model, text, _token) {
+        return (0, tokens_js_1.estimateTokenCount)(text, this.charsPerToken);
     }
     async setEndpoint() {
-        const current = (0, config_js_1.getEndpoint)();
+        const current = vscode.workspace.getConfiguration('magpie-relay').get('endpoint');
         const endpoint = await vscode.window.showInputBox({
             prompt: '输入 Magpie 网关地址',
-            value: current,
-            placeHolder: 'http://127.0.0.1:3425'
+            value: current || 'http://127.0.0.1:3425',
+            placeHolder: 'http://127.0.0.1:3425',
+            validateInput: value => {
+                try {
+                    const parsed = new URL(value);
+                    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+                        ? undefined
+                        : '地址必须使用 http 或 https。';
+                }
+                catch {
+                    return '请输入有效的 URL。';
+                }
+            },
         });
-        if (endpoint) {
-            const config = vscode.workspace.getConfiguration('magpie-relay');
-            await config.update('endpoint', endpoint, vscode.ConfigurationTarget.Global);
-            (0, catalog_js_1.clearModelCache)();
-            vscode.window.showInformationMessage('网关地址已更新，请刷新模型列表');
-        }
+        if (!endpoint)
+            return;
+        await vscode.workspace.getConfiguration('magpie-relay').update('endpoint', endpoint.replace(/\/+$/, ''), vscode.ConfigurationTarget.Global);
+        (0, catalog_js_1.clearModelCache)();
+        this.refreshModelPicker();
+        vscode.window.showInformationMessage('Magpie 网关地址已更新。');
     }
     async setGatewayKey() {
-        const key = await vscode.window.showInputBox({
-            prompt: '输入 Magpie 网关密钥',
-            password: true,
-            placeHolder: '输入网关密钥'
-        });
-        if (key) {
-            await this.authManager.setGatewayKey(key);
-            (0, catalog_js_1.clearModelCache)();
-            vscode.window.showInformationMessage('网关密钥已保存');
-        }
+        const key = await promptSecret('输入 Magpie 网关密钥');
+        if (key === undefined)
+            return;
+        await this.authManager.setGatewayKey(key);
+        (0, catalog_js_1.clearModelCache)();
+        this.refreshModelPicker();
     }
     async setUpstreamKey() {
-        const key = await vscode.window.showInputBox({
-            prompt: '输入上游 API 密钥（可选，部分模型需要）',
-            password: true,
-            placeHolder: '输入上游 API 密钥'
-        });
-        if (key !== undefined) {
-            await this.authManager.setUpstreamKey(key);
-            (0, catalog_js_1.clearModelCache)();
-            vscode.window.showInformationMessage('上游密钥已保存');
-        }
+        const key = await promptSecret('输入上游 API 密钥（可留空清除）');
+        if (key === undefined)
+            return;
+        await this.authManager.setUpstreamKey(key);
+        (0, catalog_js_1.clearModelCache)();
+        this.refreshModelPicker();
     }
     async refreshModels() {
         try {
             (0, catalog_js_1.clearModelCache)();
             const models = await (0, catalog_js_1.getModels)(this.authManager, true);
-            vscode.window.showInformationMessage(`已刷新，找到 ${models.length} 个模型`);
+            this.modelById = new Map(models.map(model => [model.id, model]));
+            this.refreshModelPicker();
+            vscode.window.showInformationMessage(`已刷新，找到 ${models.length} 个模型。`);
         }
         catch (error) {
-            const message = error instanceof Error ? error.message : '未知错误';
-            vscode.window.showErrorMessage(`刷新失败: ${message}`);
+            const displayError = (0, errors_js_1.createUserFacingError)(toError(error));
+            logger_js_1.logger.error('Failed to refresh Magpie models', error);
+            vscode.window.showErrorMessage(`刷新失败: ${displayError.message}`);
+            this.refreshModelPicker();
         }
     }
     async clearAll() {
         const confirmed = await vscode.window.showQuickPick(['是', '否'], {
-            placeHolder: '确定要清除所有配置吗？'
+            placeHolder: '确定要清除所有 Magpie 配置吗？',
         });
-        if (confirmed === '是') {
-            await this.authManager.clearAll();
-            (0, catalog_js_1.clearModelCache)();
-            vscode.window.showInformationMessage('已清除所有配置');
-        }
+        if (confirmed !== '是')
+            return;
+        await this.authManager.clearAll();
+        (0, catalog_js_1.clearModelCache)();
+        this.refreshModelPicker();
+        vscode.window.showInformationMessage('已清除所有 Magpie 配置。');
+    }
+    toChatInfo(model, hasApiKey) {
+        const separator = model.id.indexOf('/');
+        const provider = separator > 0 ? model.id.slice(0, separator) : 'magpie';
+        const modelName = separator > 0 ? model.id.slice(separator + 1) : model.name || model.id;
+        const capabilities = {
+            toolCalling: model.supportsToolCalling,
+            imageInput: model.supportsVision,
+        };
+        if (model.thinking)
+            capabilities.reasoningEfforts = model.thinking.supportedEfforts;
+        return {
+            id: model.id,
+            name: `${provider} / ${modelName}`,
+            family: provider,
+            version: model.maxOutputTokens?.toString() || 'dynamic',
+            detail: hasApiKey ? formatDetail(model) : '请先设置网关密钥',
+            tooltip: formatTooltip(model),
+            statusIcon: hasApiKey ? undefined : new vscode.ThemeIcon('warning'),
+            maxInputTokens: model.maxInputTokens,
+            maxOutputTokens: model.maxOutputTokens || 4096,
+            isBYOK: true,
+            isUserSelectable: true,
+            capabilities,
+            ...(model.thinking
+                ? { configurationSchema: buildThinkingEffortSchema(model.thinking) }
+                : {}),
+        };
+    }
+    unavailableModel(detail) {
+        return {
+            id: 'magpie/unavailable',
+            name: 'Magpie Relay',
+            family: 'magpie',
+            version: 'unavailable',
+            detail,
+            tooltip: detail,
+            statusIcon: new vscode.ThemeIcon('warning'),
+            maxInputTokens: 1,
+            maxOutputTokens: 1,
+            isBYOK: true,
+            isUserSelectable: false,
+            capabilities: {
+                toolCalling: false,
+                imageInput: false,
+            },
+        };
     }
 }
 exports.MagpieRelayProvider = MagpieRelayProvider;
+function buildThinkingEffortSchema(thinking) {
+    const efforts = [
+        ...(thinking.canDisable ? ['none'] : []),
+        ...thinking.supportedEfforts,
+    ];
+    return {
+        properties: {
+            reasoningEffort: {
+                type: 'string',
+                title: 'Thinking',
+                enum: efforts,
+                enumItemLabels: efforts.map(effort => formatEffortLabel(effort)),
+                enumDescriptions: efforts.map(effort => formatEffortDescription(effort)),
+                default: thinking.defaultEffort,
+                group: 'navigation',
+            },
+        },
+    };
+}
+function formatDetail(model) {
+    const parts = [];
+    if (model.supportsVision)
+        parts.push('Vision');
+    if (model.supportsReasoning)
+        parts.push('Reasoning');
+    if (model.supportsToolCalling)
+        parts.push('Tools');
+    return parts.length > 0 ? parts.join(' · ') : 'Text';
+}
+function formatTooltip(model) {
+    return [
+        model.name || model.id,
+        `Model ID: ${model.id}`,
+        `Context: ${model.contextWindow.toLocaleString()} tokens`,
+        `Input budget: ${model.maxInputTokens.toLocaleString()} tokens`,
+        `Output limit: ${(model.maxOutputTokens || 0).toLocaleString()} tokens`,
+        `Capabilities: ${formatDetail(model)}`,
+    ].join('\n');
+}
+function formatEffortLabel(effort) {
+    switch (effort) {
+        case 'none': return 'Off';
+        case 'minimal': return 'Minimal';
+        case 'low': return 'Low';
+        case 'medium': return 'Medium';
+        case 'high': return 'High';
+        case 'xhigh': return 'XHigh';
+        case 'max': return 'Max';
+        default: return effort;
+    }
+}
+function formatEffortDescription(effort) {
+    if (effort === 'none')
+        return 'Disable thinking for models that support it.';
+    return `Use model-supported reasoning effort: ${effort}.`;
+}
+async function promptSecret(prompt) {
+    return vscode.window.showInputBox({
+        prompt,
+        password: true,
+    });
+}
+function toError(error) {
+    return error instanceof Error ? error : new Error(String(error));
+}

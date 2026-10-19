@@ -20,9 +20,28 @@ export function getReasoningEffort(): string {
   return config.get<string>('reasoningEffort') || 'medium';
 }
 
+/**
+ * Read the per-model `reasoningEffort` from VS Code's model configuration.
+ * `modelConfiguration` is set by the user per-model in the picker dropdown.
+ */
+export function getModelConfiguredReasoningEffort(
+  options: vscode.ProvideLanguageModelChatResponseOptions,
+): string | undefined {
+  const modelCfg = (options as any)?.modelConfiguration;
+  if (typeof modelCfg?.reasoningEffort === 'string') {
+    return modelCfg.reasoningEffort;
+  }
+  return undefined;
+}
+
 export function isDebugMode(): boolean {
   const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
   return config.get<boolean>('debugMode') || false;
+}
+
+export function getEnableTools(): boolean {
+  const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
+  return config.get<boolean>('enableTools') ?? true;
 }
 
 export async function updateConfig(key: string, value: any): Promise<void> {

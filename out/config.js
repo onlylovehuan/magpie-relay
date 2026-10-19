@@ -37,7 +37,9 @@ exports.CONFIG_SECTION = void 0;
 exports.getEndpoint = getEndpoint;
 exports.getMaxTokens = getMaxTokens;
 exports.getReasoningEffort = getReasoningEffort;
+exports.getModelConfiguredReasoningEffort = getModelConfiguredReasoningEffort;
 exports.isDebugMode = isDebugMode;
+exports.getEnableTools = getEnableTools;
 exports.updateConfig = updateConfig;
 const vscode = __importStar(require("vscode"));
 exports.CONFIG_SECTION = 'magpie-relay';
@@ -56,9 +58,24 @@ function getReasoningEffort() {
     const config = vscode.workspace.getConfiguration(exports.CONFIG_SECTION);
     return config.get('reasoningEffort') || 'medium';
 }
+/**
+ * Read the per-model `reasoningEffort` from VS Code's model configuration.
+ * `modelConfiguration` is set by the user per-model in the picker dropdown.
+ */
+function getModelConfiguredReasoningEffort(options) {
+    const modelCfg = options?.modelConfiguration;
+    if (typeof modelCfg?.reasoningEffort === 'string') {
+        return modelCfg.reasoningEffort;
+    }
+    return undefined;
+}
 function isDebugMode() {
     const config = vscode.workspace.getConfiguration(exports.CONFIG_SECTION);
     return config.get('debugMode') || false;
+}
+function getEnableTools() {
+    const config = vscode.workspace.getConfiguration(exports.CONFIG_SECTION);
+    return config.get('enableTools') ?? true;
 }
 async function updateConfig(key, value) {
     const config = vscode.workspace.getConfiguration(exports.CONFIG_SECTION);

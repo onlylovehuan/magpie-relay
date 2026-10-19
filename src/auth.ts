@@ -40,7 +40,13 @@ export class AuthManager {
   }
 
   async setGatewayKey(key: string): Promise<void> {
-    await this.secretStorage.store(SECRET_GATEWAY_KEY, key.trim());
+    const trimmed = key.trim();
+    if (trimmed) {
+      await this.secretStorage.store(SECRET_GATEWAY_KEY, trimmed);
+    } else {
+      await this.secretStorage.delete(SECRET_GATEWAY_KEY);
+    }
+    await updateConfig('gatewayKey', undefined);
   }
 
   async getUpstreamKey(): Promise<string | undefined> {
@@ -52,7 +58,13 @@ export class AuthManager {
   }
 
   async setUpstreamKey(key: string): Promise<void> {
-    await this.secretStorage.store(SECRET_UPSTREAM_KEY, key.trim());
+    const trimmed = key.trim();
+    if (trimmed) {
+      await this.secretStorage.store(SECRET_UPSTREAM_KEY, trimmed);
+    } else {
+      await this.secretStorage.delete(SECRET_UPSTREAM_KEY);
+    }
+    await updateConfig('upstreamApiKey', undefined);
   }
 
   async hasAnyKey(): Promise<boolean> {

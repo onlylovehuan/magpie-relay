@@ -1,116 +1,141 @@
-import { MagpieModelsResponse, ModelInfo, MagpieModel } from '../types.js';
-import { getEndpoint, isDebugMode } from '../config.js';
 import { AuthManager } from '../auth.js';
-
-/**
- * Parse Magpie model to VS Code compatible format
- */
-function parseMagpieModel(model: MagpieModel): ModelInfo {
-  const hasImageInput = model.modalities?.input?.includes('image') ?? false;
-
-  const hasReasoning = model.reasoning === true ||
-    (model.supported_reasoning_levels !== undefined && model.supported_reasoning_levels.length > 0) ||
-    (model.reasoning_levels !== undefined && model.reasoning_levels.length > 0);
-
-  return {
-    id: model.id,
-    name: model.display_name || model.id,
-    contextWindow: model.context_window || model.context_length || 4096,
-    supportsVision: hasImageInput,
-    supportsToolCalling: true,
-    supportsReasoning: hasReasoning,
-    reasoningEfforts: model.supported_reasoning_levels?.map(r => r.effort) ||
-                     model.reasoning_levels ||
-                     undefined,
-    maxOutputTokens: model.max_output_tokens
-  };
-}
-
-/**
- * Fetch models from Magpie gateway
- */
-export async function fetchModels(
-  endpoint: string,
-  authManager: AuthManager
-): Promise<ModelInfo[]> {
-  const gatewayKey = await authManager.getGatewayKey();
-  const upstreamKey = await authManager.getUpstreamKey();
-
-  if (!gatewayKey && !upstreamKey) {
-    throw new Error('请先设置 Magpie 网关密钥');
-  }
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json'
-  };
-
-  if (gatewayKey) {
-    headers['Authorization'] = `Bearer ${gatewayKey}`;
-  }
-  if (upstreamKey) {
-    headers['x-api-key'] = upstreamKey;
-  }
-
-  try {
-    const response = await fetch(`${endpoint}/v1/models`, {
-      method: 'GET',
-      headers
-    });
-
-    if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
-        throw new Error('认证失败，请检查网关密钥是否正确');
-      }
-      throw new Error(`获取模型列表失败: ${response.status}`);
-    }
-
-    const data: MagpieModelsResponse = await response.json();
-
-    if (isDebugMode()) {
-      console.log('[Magpie Relay] Fetched models:', data.data.length);
-    }
-
-    return data.data.map(parseMagpieModel);
-  } catch (error) {
-    if (error instanceof TypeError && error.message.includes('fetch')) {
-      throw new Error('网络连接失败，请检查 Magpie 网关是否运行');
-    }
-    throw error;
-  }
-}
+import { MagpieRelayError } from '../errors.js';
+import { logger } from '../logger.js';
+import { getEndpoint, isDebugMode } from '../config.js';
+import type { MagpieModel, ModelInfo } from '../types.js';
+import { MagpieClient } from './client.js';
 
 const CACHE_DURATION_MS = 5 * 60 * 1000;
 
 let cachedModels: ModelInfo[] = [];
+let cacheKey = '';
 let cacheTime = 0;
+let inFlight: Promise<ModelInfo[]> | undefined;
+
+export function parseMagpieModel(model: MagpieModel): ModelInfo {
+  const totalContext = positiveNumber(
+    model.context_window ?? model.context_length ?? model.max_input_tokens,
+  ) ?? 0;
+  const maxOutputTokens = positiveNumber(model.max_output_tokens)
+    ?? clamp(Math.round(totalContext / 8), 4096, 131072);
+  const maxInputTokens = Math.max(1024, totalContext - maxOutputTokens);
+
+  const rawEfforts = [
+    ...(model.supported_reasoning_levels ?? [])
+      .map(level => level?.effort)
+      .filter((effort): effort is string => typeof effort === 'string' && effort.length > 0),
+    ...(model.reasoning_levels ?? []),
+    ...(model.capabilities?.reasoning_effort ?? []),
+  ];
+  const enabledEfforts = [...new Set(rawEfforts.filter(effort => effort !== 'none'))];
+  const canDisable = rawEfforts.includes('none');
+  const thinking = enabledEfforts.length > 0
+    ? {
+        supportedEfforts: Object.freeze(enabledEfforts),
+        defaultEffort: enabledEfforts.includes('medium') ? 'medium' : enabledEfforts[0]!,
+        canDisable,
+      }
+    : false;
+
+  const supportsToolCalling = model.tool_call !== false
+    && model.capabilities?.supports_tool_use !== false;
+  const supportsVision = model.modalities?.input?.includes('image') === true
+    || model.capabilities?.supports_vision === true;
+
+  return {
+    id: model.id,
+    name: model.display_name || model.id,
+    contextWindow: totalContext,
+    maxInputTokens,
+    supportsVision,
+    supportsToolCalling,
+    supportsReasoning: model.reasoning === true || enabledEfforts.length > 0,
+    reasoningEfforts: thinking ? [...thinking.supportedEfforts] : undefined,
+    maxOutputTokens,
+    thinking,
+  };
+}
+
+export async function fetchModels(
+  endpoint: string,
+  authManager: AuthManager,
+  token?: import('vscode').CancellationToken,
+): Promise<ModelInfo[]> {
+  const gatewayKey = await authManager.getGatewayKey();
+  const upstreamKey = await authManager.getUpstreamKey();
+  if (!gatewayKey && !upstreamKey) {
+    throw new MagpieRelayError({
+      kind: 'auth',
+      message: 'Magpie gateway key is not configured',
+      userSummary: '请先设置 Magpie 网关密钥。',
+    });
+  }
+
+  const client = new MagpieClient(endpoint, { gatewayKey, upstreamKey });
+  const response = await client.listModels(token);
+  const models = [
+    ...new Map(response.data.map(parseMagpieModel).map(model => [model.id, model])).values(),
+  ];
+  if (models.length === 0) {
+    throw new MagpieRelayError({
+      kind: 'request',
+      message: 'Magpie returned an empty model catalog',
+      userSummary: 'Magpie 没有返回可用模型，请检查已在 Magpie 中开启的模型。',
+    });
+  }
+  return models;
+}
 
 export async function getModels(
   authManager: AuthManager,
-  forceRefresh = false
+  forceRefresh = false,
+  token?: import('vscode').CancellationToken,
 ): Promise<ModelInfo[]> {
   const endpoint = getEndpoint();
   const now = Date.now();
-
-  if (!forceRefresh && cachedModels.length > 0 && (now - cacheTime) < CACHE_DURATION_MS) {
+  if (!forceRefresh
+    && cacheKey === endpoint
+    && cachedModels.length > 0
+    && now - cacheTime < CACHE_DURATION_MS) {
     return cachedModels;
   }
 
-  const models = await fetchModels(endpoint, authManager);
-  cachedModels = models;
-  cacheTime = now;
+  if (!forceRefresh && inFlight) return inFlight;
 
-  return models;
+  const request = fetchModels(endpoint, authManager, token)
+    .then(models => {
+      cachedModels = models;
+      cacheKey = endpoint;
+      cacheTime = Date.now();
+      if (isDebugMode()) logger.debug(`Fetched ${models.length} Magpie models`);
+      return models;
+    })
+    .finally(() => {
+      inFlight = undefined;
+    });
+
+  inFlight = request;
+  return request;
 }
 
 export function clearModelCache(): void {
   cachedModels = [];
+  cacheKey = '';
   cacheTime = 0;
 }
 
 export async function getModelById(
   id: string,
-  authManager: AuthManager
+  authManager: AuthManager,
 ): Promise<ModelInfo | undefined> {
   const models = await getModels(authManager);
-  return models.find(m => m.id === id);
+  return models.find(model => model.id === id);
+}
+
+function positiveNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }

@@ -10,6 +10,8 @@
 - ✅ **推理模型** - 支持思考/推理能力（自动检测）
 - ✅ **流式响应** - 实时流式输出
 - ✅ **安全存储** - API Key 使用 OS 密钥链存储
+- ✅ **工具调用回放** - 完整回传工具调用和工具结果
+- ✅ **Usage 回传** - 将网关 token 使用数据交给 Copilot 校准上下文
 
 ## 安装
 
@@ -95,21 +97,23 @@ magpie serve
 
 ```
 src/
-├── extension.ts          # 入口文件
-├── auth.ts             # 认证管理
-├── config.ts           # 配置读取
-├── consts.ts          # 常量定义
-├── types.ts            # 类型定义
-├── client/
-│   └── core.ts        # API 客户端
+├── extension.ts            # 入口文件
+├── auth.ts                 # 认证管理，优先使用 SecretStorage
+├── config.ts               # 配置读取
+├── errors.ts               # 用户可见错误和诊断信息
+├── logger.ts               # OutputChannel 日志
+├── types.ts                # Magpie / OpenAI / VS Code 类型
 ├── provider/
-│   ├── index.ts       # 主 Provider 类
-│   ├── catalog.ts     # 模型目录
-│   ├── convert.ts     # 消息格式转换
-│   └── stream.ts      # 流式响应
+│   ├── index.ts            # 主 Provider 类
+│   ├── catalog.ts          # 模型目录和能力归一化
+│   ├── client.ts           # Magpie HTTP/SSE 客户端
+│   ├── convert.ts          # 消息、图片、工具调用和结果转换
+│   ├── request.ts          # 请求准备和 reasoning effort 校验
+│   ├── stream.ts           # 响应桥接到 VS Code progress
+│   └── tokens.ts           # Token 和 usage 估算
 └── runtime/
-    ├── lifecycle.ts   # 生命周期
-    └── provider.ts    # Provider 注册
+    ├── lifecycle.ts         # 生命周期
+    └── provider.ts          # Provider 注册
 ```
 
 ## License

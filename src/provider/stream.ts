@@ -1,246 +1,100 @@
 import * as vscode from 'vscode';
-import { ChatCompletionRequest, StreamResponse, ToolCall } from '../types.js';
-import { getEndpoint, getMaxTokens, getReasoningEffort, isDebugMode } from '../config.js';
-import { AuthManager } from '../auth.js';
-import { convertMessages, convertTools } from './convert.js';
+import { createUserFacingError } from '../errors.js';
+import { logger } from '../logger.js';
+import type { ChatUsage } from '../types.js';
+import type { PreparedChatRequest } from './request.js';
 
-interface StreamCallbacks {
-  onContent?: (content: string) => void;
-  onThinking?: (thinking: string) => void;
-  onToolCallStart?: (toolCall: ToolCall) => void;
-  onToolCallEnd?: () => void;
-  onError?: (error: Error) => void;
-  onDone?: () => void;
-  onUsage?: (usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }) => void;
-  /** Optional progress reporter for streaming response parts (text / tool calls). */
-  progress?: vscode.Progress<vscode.LanguageModelResponsePart>;
+const COPILOT_USAGE_DATA_PART_MIME = 'usage';
+
+export interface StreamChatCompletionOptions {
+  prepared: PreparedChatRequest;
+  progress: vscode.Progress<vscode.LanguageModelResponsePart>;
+  token: vscode.CancellationToken;
+  getCharsPerToken: () => number;
+  setCharsPerToken: (charsPerToken: number) => void;
 }
 
-/**
- * Send streaming chat completion request to Magpie
- */
-export async function streamChatCompletion(
-  endpoint: string,
-  request: ChatCompletionRequest,
-  gatewayKey: string | undefined,
-  upstreamKey: string | undefined,
-  callbacks: StreamCallbacks,
-  cancellationToken?: vscode.CancellationToken
-): Promise<void> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json'
+export function streamChatCompletion(options: StreamChatCompletionOptions): Promise<void> {
+  const { prepared, progress, token } = options;
+
+  return prepared.client.streamChatCompletion(
+    prepared.request,
+    {
+      onContent: content => {
+        progress.report(new vscode.LanguageModelTextPart(content));
+      },
+      onThinking: thinking => {
+        progress.report(
+          new vscode.LanguageModelThinkingPart(thinking) as unknown as vscode.LanguageModelResponsePart,
+        );
+      },
+      onToolCall: toolCall => {
+        progress.report(createToolCallPart(toolCall.id, toolCall.function.name, toolCall.function.arguments));
+      },
+      onError: error => {
+        throw createUserFacingError(error);
+      },
+      onUsage: usage => {
+        reportUsage(usage, prepared.totalRequestChars, progress, options);
+      },
+    },
+    token,
+  );
+}
+
+function createToolCallPart(
+  callId: string,
+  name: string,
+  argumentsText: string,
+): vscode.LanguageModelToolCallPart {
+  try {
+    return new vscode.LanguageModelToolCallPart(callId, name, JSON.parse(argumentsText));
+  } catch (error) {
+    logger.warn('Failed to parse Magpie tool-call arguments', argumentsText, error);
+    return new vscode.LanguageModelToolCallPart(callId, name, {});
+  }
+}
+
+function reportUsage(
+  usage: ChatUsage,
+  totalRequestChars: number,
+  progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+  options: StreamChatCompletionOptions,
+): void {
+  const charsPerToken = updateCharsPerToken(
+    totalRequestChars,
+    usage.prompt_tokens,
+    options.getCharsPerToken(),
+  );
+  options.setCharsPerToken(charsPerToken);
+
+  const data = {
+    prompt_tokens: usage.prompt_tokens,
+    completion_tokens: usage.completion_tokens,
+    total_tokens: usage.total_tokens,
+    prompt_tokens_details: {
+      cached_tokens: usage.prompt_cache_hit_tokens
+        ?? usage.prompt_tokens_details?.cached_tokens
+        ?? 0,
+    },
   };
-
-  if (gatewayKey) {
-    headers['Authorization'] = `Bearer ${gatewayKey}`;
-  }
-  if (upstreamKey) {
-    headers['x-api-key'] = upstreamKey;
-  }
-
-  if (isDebugMode()) {
-    console.log('[Magpie Relay] Request:', JSON.stringify(request, null, 2));
-  }
-
-  const controller = new AbortController();
-
-  // Handle cancellation
-  if (cancellationToken) {
-    cancellationToken.onCancellationRequested(() => {
-      controller.abort();
-    });
-  }
 
   try {
-    const response = await fetch(`${endpoint}/v1/chat/completions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        ...request,
-        stream: true,
-        stream_options: { include_usage: true }
-      }),
-      signal: controller.signal
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`API 请求失败 (${response.status}): ${errorText}`);
-    }
-
-    const body = response.body;
-    if (!body) {
-      throw new Error('No response body');
-    }
-
-    const reader = body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let currentToolCall: ToolCall | null = null;
-
-    while (true) {
-      const { done, value } = await reader.read();
-
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-
-        const data = line.slice(6);
-        if (data === '[DONE]') {
-          callbacks.onDone?.();
-          return;
-        }
-
-        try {
-          const chunk: StreamResponse = JSON.parse(data);
-
-          // Handle usage
-          if (chunk.usage) {
-            callbacks.onUsage?.(chunk.usage);
-          }
-
-          // Handle delta content
-          const delta = chunk.choices?.[0]?.delta;
-          if (delta) {
-            // Reasoning/thinking content
-            if (delta.reasoning) {
-              callbacks.progress?.report(
-                new vscode.LanguageModelThinkingPart(delta.reasoning) as unknown as vscode.LanguageModelResponsePart,
-              );
-              callbacks.onThinking?.(delta.reasoning);
-            }
-
-            // Text content — report immediately via progress (streaming)
-            if (delta.content) {
-              callbacks.progress?.report(new vscode.LanguageModelTextPart(delta.content));
-              callbacks.onContent?.(delta.content);
-            }
-
-            // Tool calls — report via progress when complete
-            if (delta.tool_calls && delta.tool_calls.length > 0) {
-              for (const toolCall of delta.tool_calls) {
-                if (!currentToolCall || currentToolCall.id !== toolCall.id) {
-                  // Start new tool call
-                  if (currentToolCall) {
-                    callbacks.onToolCallEnd?.();
-                    // Report completed tool call via progress
-                    try {
-                      callbacks.progress?.report(
-                        new vscode.LanguageModelToolCallPart(
-                          currentToolCall.id,
-                          currentToolCall.function.name,
-                          JSON.parse(currentToolCall.function.arguments),
-                        ),
-                      );
-                    } catch {
-                      callbacks.progress?.report(
-                        new vscode.LanguageModelToolCallPart(
-                          currentToolCall.id,
-                          currentToolCall.function.name,
-                          {},
-                        ),
-                      );
-                    }
-                  }
-                  currentToolCall = {
-                    id: toolCall.id,
-                    type: 'function',
-                    function: {
-                      name: toolCall.function?.name || '',
-                      arguments: toolCall.function?.arguments || ''
-                    }
-                  };
-                  callbacks.onToolCallStart?.(currentToolCall);
-                } else {
-                  // Continue current tool call
-                  currentToolCall.function.arguments += toolCall.function?.arguments || '';
-                }
-              }
-            }
-          }
-
-          // Handle finish
-          if (chunk.choices?.[0]?.finish_reason) {
-            if (currentToolCall) {
-              callbacks.onToolCallEnd?.();
-              // Report final tool call via progress
-              try {
-                callbacks.progress?.report(
-                  new vscode.LanguageModelToolCallPart(
-                    currentToolCall.id,
-                    currentToolCall.function.name,
-                    JSON.parse(currentToolCall.function.arguments),
-                  ),
-                );
-              } catch {
-                callbacks.progress?.report(
-                  new vscode.LanguageModelToolCallPart(
-                    currentToolCall.id,
-                    currentToolCall.function.name,
-                    {},
-                  ),
-                );
-              }
-              currentToolCall = null;
-            }
-          }
-        } catch (parseError) {
-          if (isDebugMode()) {
-            console.log('[Magpie Relay] Parse error:', parseError);
-          }
-        }
-      }
-    }
-
-    callbacks.onDone?.();
+    progress.report(new vscode.LanguageModelDataPart(
+      new TextEncoder().encode(JSON.stringify(data)),
+      COPILOT_USAGE_DATA_PART_MIME,
+    ));
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      callbacks.onDone?.();
-      return;
-    }
-    callbacks.onError?.(error instanceof Error ? error : new Error(String(error)));
+    logger.warn('Failed to report Magpie usage to Copilot', error);
   }
 }
 
-/**
- * Prepare chat request from VS Code parameters
- */
-export async function prepareChatRequest(
-  authManager: AuthManager,
-  modelId: string,
-  messages: readonly vscode.LanguageModelChatMessage[],
-  options: vscode.ProvideLanguageModelChatResponseOptions,
-  token: vscode.CancellationToken
-): Promise<{ request: ChatCompletionRequest; gatewayKey: string | undefined; upstreamKey: string | undefined }> {
-  const gatewayKey = await authManager.getGatewayKey();
-  const upstreamKey = await authManager.getUpstreamKey();
-  const endpoint = getEndpoint();
-
-  if (!gatewayKey && !upstreamKey) {
-    throw new Error('请先设置 Magpie 网关密钥');
-  }
-
-  // Convert messages
-  const convertedMessages = convertMessages(messages);
-
-  // Build request
-  const request: ChatCompletionRequest = {
-    model: modelId,
-    messages: convertedMessages,
-    max_tokens: getMaxTokens(),
-    reasoning_effort: getReasoningEffort()
-  };
-
-  // Add tools if provided
-  if (options.tools && options.tools.length > 0) {
-    request.tools = convertTools(options.tools);
-    request.tool_choice = 'auto';
-  }
-
-  return { request, gatewayKey, upstreamKey };
+function updateCharsPerToken(
+  totalRequestChars: number,
+  promptTokens: number,
+  charsPerToken: number,
+): number {
+  if (totalRequestChars <= 0 || promptTokens <= 0) return charsPerToken;
+  const observed = totalRequestChars / promptTokens;
+  return charsPerToken * 0.7 + observed * 0.3;
 }

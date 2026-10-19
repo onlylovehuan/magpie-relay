@@ -36,67 +36,161 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.convertMessages = convertMessages;
 exports.convertTools = convertTools;
 const vscode = __importStar(require("vscode"));
-/**
- * Convert VS Code message format to OpenAI-compatible format
- */
-function convertMessages(messages) {
+const logger_js_1 = require("../logger.js");
+const json_js_1 = require("../json.js");
+function convertMessages(messages, options) {
     const result = [];
     for (const message of messages) {
-        let role;
-        if (message.role === 1) {
-            role = 'user';
-        }
-        else if (message.role === 2) {
-            role = 'assistant';
-        }
-        else {
-            role = 'user'; // Default fallback
-        }
-        // Process content parts
-        const parts = [];
+        const role = mapRole(message.role);
+        const textSegments = [];
+        const imageParts = [];
+        const toolCalls = [];
+        const toolResults = [];
+        let thinkingContent = '';
         for (const part of message.content) {
             if (part instanceof vscode.LanguageModelTextPart) {
-                parts.push({ type: 'text', text: part.value });
+                textSegments.push(part.value);
             }
-            else if (part instanceof vscode.LanguageModelDataPart) {
-                // Check if it's an image based on mime type
-                if (part.mimeType?.startsWith('image/')) {
-                    parts.push({
-                        type: 'image_url',
-                        image_url: {
-                            url: `data:${part.mimeType};base64,${part.data}`,
-                            detail: 'auto'
-                        }
-                    });
+            else if (isThinkingPart(part)) {
+                thinkingContent += normalizeThinkingText(part.value);
+            }
+            else if (part instanceof vscode.LanguageModelToolCallPart) {
+                toolCalls.push({
+                    id: part.callId,
+                    type: 'function',
+                    function: {
+                        name: part.name,
+                        arguments: (0, json_js_1.safeStringify)(part.input ?? {}),
+                    },
+                });
+            }
+            else if (part instanceof vscode.LanguageModelToolResultPart) {
+                toolResults.push({
+                    callId: part.callId,
+                    content: convertToolResult(part, options.imageInput),
+                });
+            }
+            else if (part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith('image/')) {
+                if (!options.imageInput) {
+                    logger_js_1.logger.warn(`Dropping image part (${part.mimeType}, ${part.data.byteLength} bytes): model does not advertise image input`);
+                    continue;
                 }
-                else {
-                    // Treat as text
-                    parts.push({ type: 'text', text: part.data.toString() });
-                }
+                imageParts.push({
+                    type: 'image_url',
+                    image_url: {
+                        url: toDataUrl(part.mimeType, part.data),
+                        detail: 'auto',
+                    },
+                });
             }
         }
-        if (parts.length === 0) {
-            result.push({ role, content: '' });
+        const text = textSegments.join('');
+        if (role === 'assistant') {
+            if (text || toolCalls.length > 0) {
+                const assistantMessage = {
+                    role: 'assistant',
+                    content: text,
+                };
+                if (toolCalls.length > 0)
+                    assistantMessage.tool_calls = toolCalls;
+                if (options.isThinkingModel && thinkingContent) {
+                    assistantMessage.reasoning_content = thinkingContent;
+                }
+                result.push(assistantMessage);
+            }
         }
-        else if (parts.length === 1 && parts[0].type === 'text') {
-            result.push({ role, content: parts[0].text });
+        else if (text || imageParts.length > 0) {
+            result.push({
+                role: 'user',
+                content: imageParts.length > 0
+                    ? [
+                        ...(text ? [{ type: 'text', text }] : []),
+                        ...imageParts,
+                    ]
+                    : text,
+            });
         }
-        else {
-            result.push({ role, content: parts });
+        for (const toolResult of toolResults) {
+            result.push({
+                role: 'tool',
+                content: toolResult.content,
+                tool_call_id: toolResult.callId,
+            });
         }
     }
     return result;
 }
-/**
- * Convert VS Code tool definitions to OpenAI format
- */
 function convertTools(tools) {
+    if (!tools || tools.length === 0)
+        return undefined;
     return tools.map(tool => ({
         type: 'function',
         function: {
             name: tool.name,
             description: tool.description,
-            parameters: tool.inputSchema
-        }
+            parameters: normalizeToolSchema(tool.inputSchema),
+        },
     }));
+}
+function normalizeToolSchema(schema) {
+    if (typeof schema === 'object' && schema !== null) {
+        const candidate = schema;
+        if (candidate.type === 'object')
+            return candidate;
+    }
+    return { type: 'object', properties: {} };
+}
+function convertToolResult(part, imageInput) {
+    const textSegments = [];
+    const imageParts = [];
+    const otherParts = [];
+    for (const item of part.content) {
+        if (item instanceof vscode.LanguageModelTextPart) {
+            textSegments.push(item.value);
+        }
+        else if (item instanceof vscode.LanguageModelDataPart && item.mimeType.startsWith('image/')) {
+            if (imageInput) {
+                imageParts.push({
+                    type: 'image_url',
+                    image_url: { url: toDataUrl(item.mimeType, item.data) },
+                });
+            }
+            else {
+                logger_js_1.logger.warn(`Dropping tool-result image (${item.mimeType}): model does not advertise image input`);
+            }
+        }
+        else {
+            otherParts.push(item);
+        }
+    }
+    if (imageParts.length > 0) {
+        return [
+            ...(textSegments.join('') ? [{ type: 'text', text: textSegments.join('') }] : []),
+            ...imageParts,
+        ];
+    }
+    const text = textSegments.join('');
+    if (text)
+        return text;
+    if (otherParts.length > 0)
+        return (0, json_js_1.safeStringify)(otherParts);
+    return '';
+}
+function isThinkingPart(part) {
+    return typeof vscode.LanguageModelThinkingPart === 'function'
+        && part instanceof vscode.LanguageModelThinkingPart;
+}
+function normalizeThinkingText(value) {
+    return Array.isArray(value) ? value.join('') : String(value);
+}
+function toDataUrl(mimeType, data) {
+    let binary = '';
+    for (const byte of data)
+        binary += String.fromCharCode(byte);
+    return `data:${mimeType};base64,${btoa(binary)}`;
+}
+function mapRole(role) {
+    if (role === vscode.LanguageModelChatMessageRole.Assistant)
+        return 'assistant';
+    return 'user';
 }
