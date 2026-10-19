@@ -1,14 +1,12 @@
 # Dependencies
 node_modules/
 
-# Build output
-out/
-
 # Logs
 *.log
 
-# VSIX package
-*.vsix
+# SVG source (we use PNG)
+media/icon.svg
+media/generate-icons.js
 
 # OS
 .DS_Store

@@ -4,10 +4,15 @@
   "description": "VS Code Copilot Chat provider for Magpie gateway",
   "version": "0.1.0",
   "publisher": "relay",
+  "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.116.0"
   },
-  "categories": ["AI", "Chat", "Programming Languages"],
+  "categories": [
+    "AI",
+    "Chat",
+    "Programming Languages"
+  ],
   "main": "./out/extension.js",
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -17,8 +22,9 @@
   },
   "devDependencies": {
     "@types/vscode": "^1.116.0",
-    "typescript": "^5.3.0",
-    "@vscode/vsce": "^3.0.0"
+    "@vscode/vsce": "^3.0.0",
+    "sharp": "^0.35.5",
+    "typescript": "^5.3.0"
   },
   "contributes": {
     "languageModelChatProviders": [
@@ -88,7 +94,11 @@
         "magpie-relay.reasoningEffort": {
           "type": "string",
           "default": "medium",
-          "enum": ["low", "medium", "high"],
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
           "description": "默认推理深度"
         }
       }

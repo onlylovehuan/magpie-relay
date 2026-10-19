@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- 背景圆 -->
+  <circle cx="64" cy="64" r="60" fill="#4A90D9"/>
+  <circle cx="64" cy="64" r="52" fill="#5BA0E9"/>
+
+  <!-- 喜鹊身体简化图案 -->
+  <g fill="#FFFFFF">
+    <!-- 喜鹊头部/喙 -->
+    <path d="M75 50 L95 55 L75 60 Z"/>
+    <!-- 喜鹊身体曲线 -->
+    <ellipse cx="55" cy="65" rx="30" ry="25"/>
+    <!-- 喜鹊翅膀羽毛 -->
+    <path d="M30 55 Q20 70 35 80 L55 70 Z"/>
+    <path d="M35 60 Q25 72 40 82 L55 72 Z"/>
+    <!-- 喜鹊尾羽 -->
+    <path d="M25 70 L10 95 L30 85 L25 70"/>
+    <path d="M28 72 L15 97 L35 87 L28 72"/>
+  </g>
+
+  <!-- 喜鹊眼睛 -->
+  <circle cx="78" cy="54" r="4" fill="#1a1a1a"/>
+  <circle cx="79" cy="53" r="1.5" fill="#FFFFFF"/>
+
+  <!-- 喜鹊腿部 -->
+  <g stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" fill="none">
+    <path d="M50 88 L50 100"/>
+    <path d="M60 88 L60 100"/>
+  </g>
+
+  <!-- 脚爪 -->
+  <g stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" fill="none">
+    <path d="M50 100 L45 105"/>
+    <path d="M50 100 L50 106"/>
+    <path d="M50 100 L55 105"/>
+    <path d="M60 100 L55 105"/>
+    <path d="M60 100 L60 106"/>
+    <path d="M60 100 L65 105"/>
+  </g>
+
+  <!-- 电路/连接线条 (代表 relay) -->
+  <g stroke="#FFD700" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.8">
+    <path d="M85 40 L100 40 L100 25 L110 25"/>
+    <path d="M85 88 L105 88 L105 100 L115 100"/>
+    <circle cx="110" cy="25" r="4" fill="#FFD700"/>
+    <circle cx="115" cy="100" r="4" fill="#FFD700"/>
+  </g>
+</svg>
