@@ -42,15 +42,18 @@ export class MagpieRelayProvider {
     const endpoint = getEndpoint();
 
     try {
+      // Safe access to options
+      const tools = options?.tools;
+
       // Convert messages
       const convertedMessages = messages.map((msg: any) => {
         const role = msg.role === 1 ? 'user' : msg.role === 2 ? 'assistant' : 'user';
         const content = typeof msg.content === 'string' ? msg.content
-          : msg.content.map((part: any) => {
-            if (part.value !== undefined) {
+          : (msg.content || []).map((part: any) => {
+            if (part?.value !== undefined) {
               return { type: 'text', text: part.value };
             }
-            return { type: 'text', text: String(part.data ?? '') };
+            return { type: 'text', text: String(part?.data ?? '') };
           });
         return { role, content };
       });
@@ -66,13 +69,14 @@ export class MagpieRelayProvider {
         reasoning_effort: getReasoningEffort()
       };
 
-      if (options.tools && options.tools.length > 0) {
-        request.tools = options.tools.map((tool: any) => ({
+      // Safe check for tools
+      if (tools && Array.isArray(tools) && tools.length > 0) {
+        request.tools = tools.map((tool: any) => ({
           type: 'function',
           function: {
-            name: tool.name,
-            description: tool.description,
-            parameters: tool.inputSchema
+            name: tool?.name || '',
+            description: tool?.description || '',
+            parameters: tool?.inputSchema || { type: 'object' }
           }
         }));
         request.tool_choice = 'auto';

@@ -1,5 +1,15 @@
+# Dependencies
 node_modules/
+
+# Build output
 out/
-*.vsix
-.DS_Store
+
+# Logs
 *.log
+
+# VSIX package
+*.vsix
+
+# OS
+.DS_Store
+Thumbs.db

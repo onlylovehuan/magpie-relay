@@ -67,15 +67,17 @@ class MagpieRelayProvider {
     async provideLanguageModelChatResponse(model, messages, options, progress, token) {
         const endpoint = (0, config_js_1.getEndpoint)();
         try {
+            // Safe access to options
+            const tools = options?.tools;
             // Convert messages
             const convertedMessages = messages.map((msg) => {
                 const role = msg.role === 1 ? 'user' : msg.role === 2 ? 'assistant' : 'user';
                 const content = typeof msg.content === 'string' ? msg.content
-                    : msg.content.map((part) => {
-                        if (part.value !== undefined) {
+                    : (msg.content || []).map((part) => {
+                        if (part?.value !== undefined) {
                             return { type: 'text', text: part.value };
                         }
-                        return { type: 'text', text: String(part.data ?? '') };
+                        return { type: 'text', text: String(part?.data ?? '') };
                     });
                 return { role, content };
             });
@@ -88,13 +90,14 @@ class MagpieRelayProvider {
                 max_tokens: 4096,
                 reasoning_effort: (0, config_js_1.getReasoningEffort)()
             };
-            if (options.tools && options.tools.length > 0) {
-                request.tools = options.tools.map((tool) => ({
+            // Safe check for tools
+            if (tools && Array.isArray(tools) && tools.length > 0) {
+                request.tools = tools.map((tool) => ({
                     type: 'function',
                     function: {
-                        name: tool.name,
-                        description: tool.description,
-                        parameters: tool.inputSchema
+                        name: tool?.name || '',
+                        description: tool?.description || '',
+                        parameters: tool?.inputSchema || { type: 'object' }
                     }
                 }));
                 request.tool_choice = 'auto';
