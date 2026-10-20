@@ -52,7 +52,8 @@ function getEndpoint() {
 }
 function getMaxTokens() {
     const config = vscode.workspace.getConfiguration(exports.CONFIG_SECTION);
-    return config.get('maxTokens') || 4096;
+    const value = config.get('maxTokens', 0);
+    return value > 0 ? value : undefined;
 }
 function getReasoningEffort() {
     const config = vscode.workspace.getConfiguration(exports.CONFIG_SECTION);

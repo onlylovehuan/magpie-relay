@@ -2,7 +2,7 @@
   "name": "magpie-relay",
   "displayName": "Magpie Relay for Copilot",
   "description": "VS Code Copilot Chat provider for Magpie gateway",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "relay",
   "icon": "media/icon.png",
   "engines": {
@@ -82,8 +82,9 @@
         },
         "magpie-relay.maxTokens": {
           "type": "number",
-          "default": 4096,
-          "description": "最大输出 Token 数"
+          "default": 0,
+          "minimum": 0,
+          "description": "最大输出 Token 数；0 表示不主动限制，长思考推荐保持 0"
         },
         "magpie-relay.debugMode": {
           "type": "boolean",

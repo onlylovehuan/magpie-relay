@@ -21,8 +21,16 @@ export interface StreamCallbacks {
   onThinking?: (thinking: string) => void;
   onToolCall?: (toolCall: ToolCall) => void;
   onError?: (error: Error) => void;
-  onDone?: () => void;
+  onDone?: (info: StreamDoneInfo) => void;
   onUsage?: (usage: ChatUsage) => void;
+}
+
+export interface StreamDoneInfo {
+  finishReason?: string;
+  hadContent: boolean;
+  hadToolCalls: boolean;
+  thinkingChars: number;
+  usage?: ChatUsage;
 }
 
 interface ToolCallState {
@@ -139,6 +147,10 @@ export class MagpieClient {
     let buffer = '';
     let latestUsage: ChatUsage | undefined;
     let finished = false;
+    let finishReason: string | undefined;
+    let hadContent = false;
+    let hadToolCalls = false;
+    let thinkingChars = 0;
     const pendingToolCalls = new Map<number, ToolCallState>();
 
     const finish = (): void => {
@@ -146,7 +158,13 @@ export class MagpieClient {
       finished = true;
       flushToolCalls(pendingToolCalls, callbacks);
       if (latestUsage) callbacks.onUsage?.(latestUsage);
-      callbacks.onDone?.();
+      callbacks.onDone?.({
+        finishReason,
+        hadContent,
+        hadToolCalls,
+        thinkingChars,
+        usage: latestUsage,
+      });
     };
 
     try {
@@ -172,8 +190,19 @@ export class MagpieClient {
           try {
             const chunk = JSON.parse(payload) as StreamResponse;
             if (chunk.usage) latestUsage = chunk.usage;
-            this.dispatchChunk(chunk, pendingToolCalls, callbacks);
             const choice = getPrimaryChoice(chunk);
+            this.dispatchChunk(chunk, pendingToolCalls, callbacks, {
+              onThinking: value => {
+                thinkingChars += value.length;
+              },
+              onContent: () => {
+                hadContent = true;
+              },
+              onToolCall: () => {
+                hadToolCalls = true;
+              },
+            });
+            if (choice?.finish_reason) finishReason = choice.finish_reason;
             if (choice?.finish_reason) {
               flushToolCalls(pendingToolCalls, callbacks);
             }
@@ -193,15 +222,27 @@ export class MagpieClient {
     chunk: StreamResponse,
     pendingToolCalls: Map<number, ToolCallState>,
     callbacks: StreamCallbacks,
+    observe: {
+      onThinking: (value: string) => void;
+      onContent: () => void;
+      onToolCall: () => void;
+    },
   ): void {
     const choice = getPrimaryChoice(chunk);
     if (!choice) return;
 
     const reasoning = extractThinking(choice.delta);
-    if (reasoning) callbacks.onThinking?.(reasoning);
-    if (choice.delta.content) callbacks.onContent?.(choice.delta.content);
+    if (reasoning) {
+      observe.onThinking(reasoning);
+      callbacks.onThinking?.(reasoning);
+    }
+    if (choice.delta.content) {
+      observe.onContent();
+      callbacks.onContent?.(choice.delta.content);
+    }
     if (choice.delta.tool_calls) {
       accumulateToolCalls(pendingToolCalls, choice.delta.tool_calls);
+      observe.onToolCall();
     }
   }
 }

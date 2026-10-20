@@ -10,9 +10,10 @@ export function getEndpoint(): string {
   return endpoint;
 }
 
-export function getMaxTokens(): number {
+export function getMaxTokens(): number | undefined {
   const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
-  return config.get<number>('maxTokens') || 4096;
+  const value = config.get<number>('maxTokens', 0);
+  return value > 0 ? value : undefined;
 }
 
 export function getReasoningEffort(): string {

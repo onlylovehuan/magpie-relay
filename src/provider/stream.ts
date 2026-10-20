@@ -37,9 +37,29 @@ export function streamChatCompletion(options: StreamChatCompletionOptions): Prom
       onUsage: usage => {
         reportUsage(usage, prepared.totalRequestChars, progress, options);
       },
+      onDone: info => {
+        reportTruncationNotice(info, progress);
+      },
     },
     token,
   );
+}
+
+function reportTruncationNotice(
+  info: import('./client.js').StreamDoneInfo,
+  progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+): void {
+  if (info.finishReason !== 'length' || info.hadToolCalls) return;
+
+  const detail = info.hadContent
+    ? '输出在 token 上限处被截断。'
+    : `思考已使用全部输出预算（约 ${info.thinkingChars.toLocaleString()} 字符），没有留下正文输出空间。`;
+  const message = [
+    `> **Magpie Relay**: ${detail}`,
+    '> 请降低模型 Reasoning Effort，或将 `magpie-relay.maxTokens` 设为 `0`（默认，不限制）。',
+  ].join('\n');
+  progress.report(new vscode.LanguageModelTextPart(message));
+  logger.warn('Magpie response ended at max_tokens', info);
 }
 
 function createToolCallPart(

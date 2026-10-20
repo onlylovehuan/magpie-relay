@@ -40,26 +40,25 @@ export async function prepareChatRequest(options: {
   const toolCalling = modelDefinition?.supportsToolCalling
     ?? modelInfo.capabilities?.toolCalling !== false;
   const thinkingCapability = resolveThinkingCapability(modelInfo, modelDefinition);
-  const thinkingEffort = thinkingCapability
+  const configuredThinkingEffort = thinkingCapability
     ? getConfiguredThinkingEffort(requestOptions, thinkingCapability)
     : undefined;
+  const helperRequest = classifyHelperRequest(messages, filterTools(requestOptions.tools));
+  const thinkingEffort = helperRequest ? undefined : configuredThinkingEffort;
   const isThinkingModel = Boolean(thinkingCapability) && thinkingEffort !== 'none';
 
   const chatMessages = convertMessages(messages, { imageInput, isThinkingModel });
   const tools = getEnableTools() && toolCalling
     ? convertTools(filterTools(requestOptions.tools))
     : undefined;
-  const configuredMaxTokens = getMaxTokens();
-  const maxTokens = Math.max(
-    16,
-    Math.min(configuredMaxTokens, modelDefinition?.maxOutputTokens ?? configuredMaxTokens),
-  );
-
   const request: import('../types.js').ChatCompletionRequest = {
     model: modelInfo.id,
     messages: chatMessages,
-    max_tokens: maxTokens,
   };
+  const configuredMaxTokens = getMaxTokens();
+  if (configuredMaxTokens) {
+    request.max_tokens = Math.min(configuredMaxTokens, modelDefinition?.maxOutputTokens ?? configuredMaxTokens);
+  }
   if (tools && tools.length > 0) {
     request.tools = tools;
     request.tool_choice = 'auto';
@@ -125,4 +124,38 @@ function filterTools(
 
 function isSupportedEffort(value: string, thinking: ThinkingCapability): boolean {
   return thinking.supportedEfforts.includes(value);
+}
+
+const HELPER_PROMPT_PREFIXES = [
+  'You are a background task tracker',
+  'You are an expert classifier for AI coding assistant prompts',
+  'You are a Visual Studio Code assistant. Your job is to assist users in using Visual Studio Code by returning settings',
+  'You are an expert in crafting ultra-compact titles',
+  'You are an expert in crafting pithy titles',
+  'You are an expert in writing short, catchy, and encouraging progress messages',
+  'You are an expert in crafting pithy branch names',
+  'You are an AI programming assistant, helping a software developer to come with the best git commit message',
+  'You are a distinguished software engineer',
+] as const;
+
+function classifyHelperRequest(
+  messages: readonly vscode.LanguageModelChatRequestMessage[],
+  tools: readonly vscode.LanguageModelChatTool[] | undefined,
+): boolean {
+  const firstText = getMessageText(messages[0]);
+  if (HELPER_PROMPT_PREFIXES.some(prefix => firstText.startsWith(prefix))) return true;
+
+  const toolNames = (tools ?? []).map(tool => tool.name);
+  return toolNames.length === 1
+    && (toolNames[0] === 'manage_todo_list' || toolNames[0] === 'categorize_prompt');
+}
+
+function getMessageText(
+  message: vscode.LanguageModelChatRequestMessage | undefined,
+): string {
+  if (!message) return '';
+  return message.content
+    .filter((part): part is vscode.LanguageModelTextPart => part instanceof vscode.LanguageModelTextPart)
+    .map(part => part.value)
+    .join('');
 }
