@@ -1,121 +1,143 @@
 # Magpie Relay for VS Code Copilot
 
-一个将 Magpie 网关服务集成到 VS Code Copilot Chat 的插件。
+English. A Simplified Chinese version is available in `README.zh-cn.md`.
 
-## 功能特性
+A VS Code Copilot Chat extension that integrates a Magpie gateway as a language-model provider.
 
-- ✅ **动态模型发现** - 自动从 Magpie 网关获取可用模型列表
-- ✅ **多模态支持** - 支持带图片输入的模型（自动检测）
-- ✅ **工具调用** - 支持 Function Calling
-- ✅ **推理模型** - 支持思考/推理能力（自动检测）
-- ✅ **流式响应** - 实时流式输出
-- ✅ **安全存储** - API Key 使用 OS 密钥链存储
-- ✅ **工具调用回放** - 完整回传工具调用和工具结果
-- ✅ **Usage 回传** - 将网关 token 使用数据交给 Copilot 校准上下文
-- ✅ **长思考保护** - 默认不限制输出 token，辅助请求不主动加深度思考
+## Features
 
-## 安装
+- Dynamic model discovery from the Magpie gateway.
+- Automatic vision, tool-calling, and reasoning capability detection from model metadata.
+- Complete tool-call and tool-result replay for multi-turn agent workflows.
+- Streaming output for thinking and response content.
+- Token usage forwarding to Copilot for context calibration.
+- No forced output-token limit by default, reducing truncated long-thinking turns.
+- SecretStorage-first storage for gateway and upstream API keys.
 
-1. 克隆本仓库
-2. 安装依赖：`npm install`
-3. 编译：`npm run compile`
-4. 打包：`npm run package`
-5. 安装生成的 `.vsix` 文件
+## Installation
 
-## 配置
+1. Clone this repository.
+2. Install dependencies:
 
-### 1. 设置 Magpie 网关地址
+   ```bash
+   npm install
+   ```
 
-打开命令面板（`Ctrl+Shift+P`），搜索 `Magpie: 设置网关地址`
+3. Compile:
 
-默认地址：`http://127.0.0.1:3425`
+   ```bash
+   npm run compile
+   ```
 
-如果 Magpie 运行在其他机器或端口，请修改为实际地址。
+4. Package:
 
-### 2. 设置网关密钥
+   ```bash
+   npm run package
+   ```
 
-打开命令面板，搜索 `Magpie: 设置网关密钥`
+5. Install the generated `.vsix` file in VS Code.
 
-输入你在 Magpie 网关设置中创建的 Gateway Key。
+## Configuration
 
-### 3. （可选）设置上游 API Key
+### 1. Set the Magpie gateway URL
 
-如果某些模型需要直接认证，可以设置上游 API Key：
-命令面板搜索 `Magpie: 设置上游 API Key`
+Open the Command Palette and run `Magpie: Set Gateway Address`.
 
-## 使用
+The default URL is:
 
-### 刷新模型列表
+```text
+http://127.0.0.1:3425
+```
 
-配置完网关后，执行 `Magpie: 刷新模型列表` 命令获取可用模型。
+Change it if Magpie runs on another host or port.
 
-### 开始对话
+### 2. Set the gateway key
 
-1. 打开 VS Code Copilot Chat（`Ctrl+Shift+I`）
-2. 在模型选择器中可以看到 "Magpie Relay" 提供商
-3. 选择你想要的模型
-4. 开始对话
+Open the Command Palette and run `Magpie: Set Gateway Key`. Enter the gateway key created in Magpie.
 
-### 可用命令
+Keys are stored in VS Code SecretStorage first. Legacy plaintext values from the old `magpie-relay.gatewayKey` setting are still read, but migrating to SecretStorage is recommended.
 
-| 命令 | 说明 |
-|------|------|
-| `Magpie: 设置网关地址` | 配置 Magpie 网关 URL |
-| `Magpie: 设置网关密钥` | 配置网关认证密钥 |
-| `Magpie: 设置上游 API Key` | 配置上游提供商密钥 |
-| `Magpie: 刷新模型列表` | 重新获取模型列表 |
-| `Magpie: 打开设置` | 打开插件设置页面 |
-| `Magpie: 清除所有配置` | 清除所有已保存的配置 |
+### 3. Optional upstream API key
 
-## 模型能力显示
+If a selected model needs a direct provider key, run `Magpie: Set Upstream API Key`.
 
-插件会根据 Magpie API 返回的信息自动显示模型能力：
+This key also uses SecretStorage first.
 
-- 🌅 **Vision** - 带图像图标表示支持图片输入
-- 🔧 **Tool Calling** - 支持工具调用
-- 🧠 **Reasoning** - 支持思考/推理
+### Settings
 
-## Magpie 网关安装
+| Setting | Default | Description |
+|---|---:|---|
+| `magpie-relay.endpoint` | `http://127.0.0.1:3425` | Magpie gateway URL |
+| `magpie-relay.maxTokens` | `0` | Maximum output tokens; `0` means no extension-level limit. Keep `0` for long-thinking workloads |
+| `magpie-relay.reasoningEffort` | `medium` | Fallback reasoning effort when no per-model setting is provided |
+| `magpie-relay.enableTools` | `true` | Forward Copilot tool definitions to Magpie |
+| `magpie-relay.debugMode` | `false` | Enable detailed debug logging |
 
-如果你还没有安装 Magpie，请参考 [Magpie 官方文档](https://github.com/yetone/magpie)。
+## Usage
 
-快速启动：
+### Refresh models
+
+Run `Magpie: Refresh Models` to request `/v1/models` again and refresh the Copilot model picker.
+
+### Start a chat
+
+1. Open VS Code Copilot Chat.
+2. Find the `Magpie Relay` provider in the model picker.
+3. Select a model.
+4. Start chatting.
+
+## Commands
+
+| Command ID | Description |
+|---|---|
+| `magpie-relay.setEndpoint` | Set the Magpie gateway URL |
+| `magpie-relay.setGatewayKey` | Set the Magpie gateway key |
+| `magpie-relay.setApiKey` | Set the optional upstream API key |
+| `magpie-relay.refreshModels` | Refresh the model list |
+| `magpie-relay.openSettings` | Open extension settings |
+| `magpie-relay.clearAll` | Clear keys and configuration |
+
+## Install Magpie
+
+See the [official Magpie repository](https://github.com/yetone/magpie).
 
 ```bash
-# 使用 Docker
+# Docker
 docker run -p 3425:3425 ghcr.io/yetone/magpie
 
-# 或使用 pip
+# pip
 pip install magpie
 magpie serve
 ```
 
-## 调试
+## Project structure
 
-在设置中开启 `magpie-relay.debugMode` 可以查看详细的请求日志。
-
-## 文件结构
-
-```
+```text
 src/
-├── extension.ts            # 入口文件
-├── auth.ts                 # 认证管理，优先使用 SecretStorage
-├── config.ts               # 配置读取
-├── errors.ts               # 用户可见错误和诊断信息
-├── logger.ts               # OutputChannel 日志
-├── types.ts                # Magpie / OpenAI / VS Code 类型
-├── provider/
-│   ├── index.ts            # 主 Provider 类
-│   ├── catalog.ts          # 模型目录和能力归一化
-│   ├── client.ts           # Magpie HTTP/SSE 客户端
-│   ├── convert.ts          # 消息、图片、工具调用和结果转换
-│   ├── request.ts          # 请求准备和 reasoning effort 校验
-│   ├── stream.ts           # 响应桥接到 VS Code progress
-│   └── tokens.ts           # Token 和 usage 估算
-└── runtime/
-    ├── lifecycle.ts         # 生命周期
-    └── provider.ts          # Provider 注册
+  extension.ts
+  auth.ts
+  config.ts
+  errors.ts
+  logger.ts
+  types.ts
+  provider/
+    index.ts
+    catalog.ts
+    client.ts
+    convert.ts
+    request.ts
+    stream.ts
+    tokens.ts
+  runtime/
+    lifecycle.ts
+    provider.ts
 ```
+
+## Debugging
+
+Enable `magpie-relay.debugMode` in settings, then open the `Magpie Relay` channel in the VS Code Output panel.
+
+If long thinking is truncated, confirm that `magpie-relay.maxTokens` is `0`, or lower the model's reasoning effort in the model picker.
 
 ## License
 
